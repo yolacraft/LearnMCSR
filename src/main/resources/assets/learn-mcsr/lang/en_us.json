@@ -1,0 +1,18 @@
+{
+	"learn-mcsr.open": "Open Learn MCSR",
+	"learn-mcsr.title": "LEARN MCSR",
+
+	"learn-mcsr.category.overworld": "OVERWORLD",
+	"learn-mcsr.category.nether": "NETHER",
+	"learn-mcsr.category.bastion": "BASTION",
+	"learn-mcsr.category.fortress": "FORTRESS",
+	"learn-mcsr.category.blind": "BLIND",
+	"learn-mcsr.category.stronghold": "STRONGHOLD",
+	"learn-mcsr.category.end": "END",
+	"learn-mcsr.category.misc": "MISC",
+
+	"learn-mcsr.menu.back": "Back to Menu",
+	"learn-mcsr.menu.progress": "Progress",
+	"learn-mcsr.menu.discord": "Discord",
+	"learn-mcsr.menu.support": "Support <3"
+}
