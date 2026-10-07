@@ -6,18 +6,32 @@ import net.minecraft.client.gui.screen.ConfirmChatLinkScreen;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.widget.ButtonWidget;
 import net.minecraft.client.texture.AbstractTexture;
+import net.minecraft.client.texture.TextureManager;
 import net.minecraft.client.util.math.MatrixStack;
 import net.minecraft.text.TranslatableText;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.Util;
 
+import java.util.concurrent.CompletableFuture;
+
 public class MainScreen extends Screen {
     private static final String MOD_ID = "learn-mcsr";
 
-    private static final Identifier BACKGROUND = new Identifier(MOD_ID, "textures/background.png");
+    private static final Identifier BACKGROUND = new Identifier(MOD_ID, "textures/categorys/background.png");
     private static final int BACKGROUND_WIDTH = 2560;
     private static final int BACKGROUND_HEIGHT = 1440;
     private static final int BACKGROUND_DIM = 0xB0000000;
+
+    private static final String VILLAGE_ANIMATION = "textures/animations/background_to_village/";
+    private static final int VILLAGE_ANIMATION_FRAMES = 21;
+    private static final int ANIMATION_FPS = 60;
+    private static final Identifier[] VILLAGE_FRAMES = new Identifier[VILLAGE_ANIMATION_FRAMES];
+
+    static {
+        for (int i = 0; i < VILLAGE_ANIMATION_FRAMES; i++) {
+            VILLAGE_FRAMES[i] = new Identifier(MOD_ID, VILLAGE_ANIMATION + i + ".png");
+        }
+    }
 
     private static final String[] CATEGORIES = {
             "overworld", "nether", "bastion", "fortress",
@@ -36,11 +50,20 @@ public class MainScreen extends Screen {
     private static final int MAX_TILE_SIZE = 100;
     private static final int SMALL_BUTTON_HEIGHT = 20;
 
+    private static final long SLIDE_DURATION_MS = 450L;
+
     private final Screen parent;
     private final String version;
 
     private int gridLeft;
     private int titleY;
+
+    // Slide animation, driven by real time instead of ticks so it runs at the full frame rate
+    private long slideStartMs = -1L;
+    private String selectedCategory;
+
+    // Frames are loaded in the background when the screen opens, so playing them doesn't stutter
+    private CompletableFuture<?>[] frameLoads;
 
     public MainScreen(Screen parent) {
         super(new TranslatableText("learn-mcsr.title"));
@@ -52,6 +75,14 @@ public class MainScreen extends Screen {
 
     @Override
     protected void init() {
+        if (this.frameLoads == null) {
+            TextureManager textureManager = this.client.getTextureManager();
+            this.frameLoads = new CompletableFuture<?>[VILLAGE_ANIMATION_FRAMES];
+            for (int i = 0; i < VILLAGE_ANIMATION_FRAMES; i++) {
+                this.frameLoads[i] = textureManager.loadTextureAsync(VILLAGE_FRAMES[i], Util.getServerWorkerExecutor());
+            }
+        }
+
         int titleHeight = (int) (this.textRenderer.fontHeight * TITLE_SCALE);
         int gridTop = MARGIN + titleHeight + GAP;
         int smallButtonsY = this.height - MARGIN - SMALL_BUTTON_HEIGHT;
@@ -73,9 +104,7 @@ public class MainScreen extends Screen {
 
             this.addButton(new CategoryButton(x, y, tileSize,
                     new TranslatableText("learn-mcsr.category." + category), icon, CATEGORY_TEXTURE_SIZE, CATEGORY_TEXTURE_SIZE,
-                    button -> {
-                        // TODO: open category screen
-                    }));
+                    button -> this.startSlide(category)));
         }
 
         int y = gridTop + 2 * tileSize + 2 * GAP;
@@ -101,16 +130,64 @@ public class MainScreen extends Screen {
         }, url, true));
     }
 
-    @Override
-    public void render(MatrixStack matrices, int mouseX, int mouseY, float delta) {
-        this.renderDimmedBackground(matrices);
-        this.renderTitle(matrices);
-        super.render(matrices, mouseX, mouseY, delta);
+    private void startSlide(String category) {
+        if (this.slideStartMs >= 0L) {
+            return;
+        }
+        this.selectedCategory = category;
+        this.slideStartMs = Util.getMeasuringTimeMs();
     }
 
-    private void renderDimmedBackground(MatrixStack matrices) {
-        this.client.getTextureManager().bindTexture(BACKGROUND);
-        AbstractTexture texture = this.client.getTextureManager().getTexture(BACKGROUND);
+    private float getSlideProgress() {
+        if (this.slideStartMs < 0L) {
+            return 0.0F;
+        }
+        float t = (Util.getMeasuringTimeMs() - this.slideStartMs) / (float) SLIDE_DURATION_MS;
+        return Math.min(t, 1.0F);
+    }
+
+    private static float easeInOutCubic(float t) {
+        return t < 0.5F ? 4.0F * t * t * t : 1.0F - (float) Math.pow(-2.0F * t + 2.0F, 3.0D) / 2.0F;
+    }
+
+    private void onSlideFinished() {
+        // TODO: open category screen for this.selectedCategory
+    }
+
+    @Override
+    public void render(MatrixStack matrices, int mouseX, int mouseY, float delta) {
+        float progress = this.getSlideProgress();
+        // Float translation instead of moving the widgets, so the movement is sub-pixel smooth
+        float offset = -easeInOutCubic(progress) * this.width;
+
+        this.renderBackgroundImage(matrices);
+
+        matrices.push();
+        matrices.translate(offset, 0.0D, 0.0D);
+        fill(matrices, 0, 0, this.width, this.height, BACKGROUND_DIM);
+        this.renderTitle(matrices);
+        super.render(matrices, mouseX - (int) offset, mouseY, delta);
+        matrices.pop();
+
+        if (progress >= 1.0F && this.selectedCategory != null) {
+            this.onSlideFinished();
+            this.selectedCategory = null;
+        }
+    }
+
+    @Override
+    public boolean mouseClicked(double mouseX, double mouseY, int button) {
+        // Ignore input while the menu is sliding away
+        if (this.slideStartMs >= 0L) {
+            return false;
+        }
+        return super.mouseClicked(mouseX, mouseY, button);
+    }
+
+    private void renderBackgroundImage(MatrixStack matrices) {
+        Identifier image = this.getCurrentBackground();
+        this.client.getTextureManager().bindTexture(image);
+        AbstractTexture texture = this.client.getTextureManager().getTexture(image);
         if (texture != null) {
             texture.setFilter(true, false);
         }
@@ -124,7 +201,24 @@ public class MainScreen extends Screen {
         RenderSystem.color4f(1.0F, 1.0F, 1.0F, 1.0F);
         drawTexture(matrices, 0, 0, this.width, this.height, u, v,
                 regionWidth, regionHeight, BACKGROUND_WIDTH, BACKGROUND_HEIGHT);
-        fill(matrices, 0, 0, this.width, this.height, BACKGROUND_DIM);
+    }
+
+    /**
+     * Picks the animation frame for the elapsed time (60 fps, holding the last frame at the end).
+     * Frames that haven't finished loading yet are skipped instead of loading them synchronously.
+     */
+    private Identifier getCurrentBackground() {
+        if (this.slideStartMs < 0L) {
+            return BACKGROUND;
+        }
+        long elapsed = Util.getMeasuringTimeMs() - this.slideStartMs;
+        int frame = (int) Math.min(elapsed * ANIMATION_FPS / 1000L, VILLAGE_ANIMATION_FRAMES - 1);
+        for (int i = frame; i >= 0; i--) {
+            if (this.frameLoads[i].isDone()) {
+                return VILLAGE_FRAMES[i];
+            }
+        }
+        return BACKGROUND;
     }
 
     private void renderTitle(MatrixStack matrices) {
